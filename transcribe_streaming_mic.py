@@ -29,6 +29,11 @@ import queue
 import re
 import sys
 import json
+import time
+import torch
+import pickle
+import os
+
 import cv2
 from google.cloud import speech
 
@@ -151,10 +156,10 @@ class MicrophoneStream:
 
 #         # Display the transcription of the interim result
 #         print(result.alternatives[0].transcript)
-display_width = 720
-display_height = 1280
+display_width = 320
+display_height = 240
 def add_videos (video_labels):
-    videos = [(word,rf"C:\Users\Owner\Documents\FMI\Hackaton\videos\{video}.mp4") for (word,video) in video_labels]
+    videos = [(word,rf"C:\Users\Owner\Documents\FMI\Hackaton\videos\{video}") for (word,video) in video_labels]
     for i in videos:
         print ("path: ",i)
         (text, path) = i
@@ -165,13 +170,13 @@ def add_videos (video_labels):
             if ret:
                 frame = cv2.resize(frame, (display_width, display_height))
                 cv2.imshow('Video', frame)
-                if cv2.waitKey(25) & 0xFF == ord('q'):
+                if cv2.waitKey(20) & 0xFF == ord('q'):
                     break
             else:
                 break
         video.release()
 
-def listen_print_loop(responses: object, words) -> str:
+def listen_print_loop(responses: object, words, word_embeddings) -> str:
     """Iterates through server responses and prints them.
 
     The responses passed is a generator that will block until a response
@@ -230,8 +235,8 @@ def listen_print_loop(responses: object, words) -> str:
             if (result.result_end_time.seconds - last_sec) > 1.5:
                 
                 new_sentence = transcript[num_chars:] + overwrite_chars
-                
-                video_labels = text2video.get_video_from_text(new_sentence, words)
+                print (new_sentence)
+                video_labels = text2video.get_video_from_text(new_sentence, words, word_embeddings)
                 
                 add_videos (video_labels)
                 last_sec = result.result_end_time.seconds
@@ -284,16 +289,28 @@ def main() -> None:
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         words = data[0]['mapping']
+        print ("OKK")
+        words_dataset = [word['token']['ur'][0] for word in words]
+       
 
+        if os.path.exists('embeddings_cache.pkl'):
+            with open('embeddings_cache.pkl', 'rb') as cache_file:
+                word_embeddings = pickle.load(cache_file)
+        else:
+            word_embeddings = {word: text2video.get_bert_embedding(word) for word in words_dataset}
+            with open('embeddings_cache.pkl', 'wb') as cache_file:
+                pickle.dump(word_embeddings, cache_file)
+        
+        print ("Embeddings loaded successfully!")
         k = 0.5
         display_width = round (720 * k)
-        display_height = round (1280 * k)
+        display_height = round (720 * k)
         flag = True
 
 
         # Now, put the transcription responses to use.
-       
-        listen_print_loop(responses, words)
+        print ("👂listening👂")
+        listen_print_loop(responses, words, word_embeddings)
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
