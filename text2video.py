@@ -19,7 +19,7 @@ def get_bert_embedding(word):
     return embeddings
 
 def find_most_similar_word(input_word, word_embeddings):
-    
+    return input_word
     input_embedding = get_bert_embedding(input_word)
     similarities = {word: cosine_similarity(input_embedding, embedding)[0][0] for word, embedding in word_embeddings.items()}
     most_similar_word = max(similarities, key=similarities.get)

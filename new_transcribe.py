@@ -1,3 +1,4 @@
+import json
 import os
 import threading
 import cv2
@@ -7,6 +8,11 @@ import pyaudio
 import threading
 import queue
 import math
+import torch
+import pickle
+import os
+import numpy as np
+import text2video
 
 # Assuming you have set GOOGLE_APPLICATION_CREDENTIALS environment variable
 client = speech.SpeechClient()
@@ -43,15 +49,17 @@ def play_video(video_path):
 
     cap.release()
 
-def video_player():
+def video_player(words, word_embeddings):
     """Thread function for playing videos based on received transcripts."""
     while True:
         word = transcript_queue.get()  # Blocking get from the queue
         print (word)
-        if word in word_to_video:
-            play_video(word_to_video["hello"])
-        else:
-            play_video(word_to_video["world"])
+        video_list = text2video.get_video_from_text(word, words, word_embeddings)
+
+        for (best_match,video) in video_list:
+            video = rf"C:\Users\Owner\Documents\FMI\Hackaton\videos\{video}"
+            print (f"Playing video for word: {best_match}", video)
+            play_video(video)
             
 
 def microphone_stream():
@@ -78,7 +86,6 @@ def speech_recognizer():
     streaming_config = speech.StreamingRecognitionConfig(config=config, interim_results=True)
 
     responses = client.streaming_recognize(streaming_config, requests)
-    print ("predi def handle_responses")
 
     # Assuming `responses` is a generator for streaming data
     response_queue = queue.Queue()
@@ -86,7 +93,7 @@ def speech_recognizer():
         for response in responses:
             # This will block waiting for the next response, but it's in a separate thread
             response_queue.put(response)
-    print ("predi thread")
+    
     # Start the response handler in a separate thread
     threading.Thread(target=handle_responses, args=(responses,), daemon=True).start()
 
@@ -145,12 +152,33 @@ def speech_recognizer():
 
 def main():
     # Start the video player thread
-    player_thread = threading.Thread(target=video_player, daemon=True)
+
+    # Load Json file and embeddings
+    file_path = rf"C:\Users\Owner\anaconda3\envs\art10\Lib\site-packages\sign_language_translator\assets\pk-dictionary-mapping.json"
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    words = data[0]['mapping']
+    print ("OKK")
+    words_dataset = [word['token']['ur'][0] for word in words]
+    
+
+    if os.path.exists('embeddings_cache.pkl'):
+        with open('embeddings_cache.pkl', 'rb') as cache_file:
+            word_embeddings = pickle.load(cache_file)
+    else:
+        word_embeddings = {word: text2video.get_bert_embedding(word) for word in words_dataset}
+        with open('embeddings_cache.pkl', 'wb') as cache_file:
+            pickle.dump(word_embeddings, cache_file)
+    
+    print ("Embeddings loaded successfully!")
+    player_thread = threading.Thread(target=video_player, args=(words,word_embeddings), daemon=True)
     player_thread.start()
+
 
     # Start the speech recognition in the main thread
     print ("Starting speech recognition...")
     speech_recognizer()
+    cv2.destroyAllWindows()
 
 if __name__ == '__main__':
     main()
