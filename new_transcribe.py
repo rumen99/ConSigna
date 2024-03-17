@@ -32,34 +32,68 @@ transcript_queue = queue.Queue()
 
 delay = 10
 def play_video(video_path):
-    """Function to play a video at a faster speed by skipping frames."""
+    """Function to play a video at a faster speed by skipping frames, starting from the 5th frame and skipping the last 5 frames."""
     cap = cv2.VideoCapture(video_path)
     frame_skip = 2  # Define how many frames to skip
 
+    # Get total number of frames and calculate the last frame to display
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    last_frame_to_display = total_frames - 10
+
+    # Set the starting frame (5th frame)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 4)
+
     while cap.isOpened():
         ret, frame = cap.read()
-        if not ret:
+        current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+        
+        # Break if we reach the end or if we've read the last frame to display
+        if not ret or current_frame > last_frame_to_display:
             break
         
         # Display every n-th frame (where n is frame_skip + 1)
-        if int(cap.get(cv2.CAP_PROP_POS_FRAMES)) % (frame_skip + 1) == 0:
+        if current_frame % (frame_skip + 1) == 0:
             cv2.imshow("Video", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):  # Minimize waitKey for faster response
                 break
 
     cap.release()
+#     cv2.destroyAllWindows()  # Close the window after the video is played
+# def play_video(video_path):
+#     """Function to play a video at a faster speed by skipping frames."""
+#     cap = cv2.VideoCapture(video_path)
+#     frame_skip = 2  # Define how many frames to skip
 
-def video_player(words, word_embeddings):
+#     while cap.isOpened():
+#         ret, frame = cap.read()
+#         if not ret:
+#             break
+        
+#         # Display every n-th frame (where n is frame_skip + 1)
+#         if int(cap.get(cv2.CAP_PROP_POS_FRAMES)) % (frame_skip + 1) == 0:
+#             cv2.imshow("Video", frame)
+#             if cv2.waitKey(1) & 0xFF == ord('q'):  # Minimize waitKey for faster response
+#                 break
+
+#     cap.release()
+
+def video_player(words, word_embeddings, words_dataset):
     """Thread function for playing videos based on received transcripts."""
     while True:
-        word = transcript_queue.get()  # Blocking get from the queue
-        print (word)
-        video_list = text2video.get_video_from_text(word, words, word_embeddings)
-
+        video_list = transcript_queue.get()  # Blocking get from the queue
         for (best_match,video) in video_list:
             video = rf"C:\Users\Owner\Documents\FMI\Hackaton\videos\{video}"
             print (f"Playing video for word: {best_match}", video)
             play_video(video)
+
+        # word = transcript_queue.get()  # Blocking get from the queue
+        # print (word)
+        # video_list = text2video.get_video_from_text(word, words, word_embeddings, words_dataset)
+
+        # for (best_match,video) in video_list:
+        #     video = rf"C:\Users\Owner\Documents\FMI\Hackaton\videos\{video}"
+        #     print (f"Playing video for word: {best_match}", video)
+        #     play_video(video)
             
 
 def microphone_stream():
@@ -74,7 +108,7 @@ def microphone_stream():
         stream.close()
         p.terminate()
 
-def speech_recognizer():
+def speech_recognizer(words, word_embeddings, words_dataset):
     """Thread function for continuous speech recognition."""
     audio_stream = microphone_stream()
     requests = (speech.StreamingRecognizeRequest(audio_content=chunk) for chunk in audio_stream)
@@ -112,13 +146,14 @@ def speech_recognizer():
                     # Process only the new part of the interim transcript since the last update
                     new_part = transcript[last_processed_pos:]
                     new_words = new_part.strip().split()
-                    for i in range(3):
-                        if already_pushed < len(new_words):
-                            transcript_queue.put(new_words[already_pushed])
-                            already_pushed += 1
-                    rest = []
-                    for i in range (already_pushed, len(new_words)):
-                        rest.append(new_words[i])
+                    if already_pushed + 3 < len(new_words) - 2:
+                        for i in range(3):
+                            if already_pushed < len(new_words):
+                                transcript_queue.put(text2video.get_video_from_text(new_words[already_pushed], words, word_embeddings, words_dataset))
+                                already_pushed += 1
+                        rest = []
+                        for i in range (already_pushed, len(new_words)):
+                            rest.append(new_words[i])
                     #print ("added", rest)
                 elif result.is_final:
                     # If the result is final, process the entire transcript
@@ -127,7 +162,7 @@ def speech_recognizer():
                     final_words = transcript.split()
                     for i in range (already_pushed, len(final_words)):
                         word = final_words[i]
-                        transcript_queue.put(word)
+                        transcript_queue.put(text2video.get_video_from_text(word, words, word_embeddings, words_dataset))
                     last_processed_pos = 0  # Reset for the next segment of speech
                     already_pushed = 0
                 else:
@@ -141,10 +176,10 @@ def speech_recognizer():
             # No response available yet
             #print("Response is None")
             #print ("rest: ", rest)
-            if transcript_queue.qsize() < 3:
+            if transcript_queue.qsize() < 3 and len(rest) > 5:
                 for i in range (3):
                     if len(rest) > 0:
-                        transcript_queue.put(rest[0])
+                        transcript_queue.put(text2video.get_video_from_text(rest[0], words, word_embeddings, words_dataset))
                         rest = rest[1:]
                         already_pushed += 1
                 
@@ -161,23 +196,22 @@ def main():
     print ("OKK")
     words_dataset = [word['token']['ur'][0] for word in words]
     
+    # Load word embeddings from bg-pos-raw.csv
+    embeddings_path = "bg-pos-raw.csv"
+    word_embeddings = {}
+    with open(embeddings_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+        for line in lines:
+            [word, embedding] = line.strip().split('\t')[:2]
+            word_embeddings[word] = embedding
 
-    if os.path.exists('embeddings_cache.pkl'):
-        with open('embeddings_cache.pkl', 'rb') as cache_file:
-            word_embeddings = pickle.load(cache_file)
-    else:
-        word_embeddings = {word: text2video.get_bert_embedding(word) for word in words_dataset}
-        with open('embeddings_cache.pkl', 'wb') as cache_file:
-            pickle.dump(word_embeddings, cache_file)
-    
-    print ("Embeddings loaded successfully!")
-    player_thread = threading.Thread(target=video_player, args=(words,word_embeddings), daemon=True)
+    player_thread = threading.Thread(target=video_player, args=(words,word_embeddings, words_dataset), daemon=True)
     player_thread.start()
 
 
     # Start the speech recognition in the main thread
     print ("Starting speech recognition...")
-    speech_recognizer()
+    speech_recognizer(words, word_embeddings, words_dataset)
     cv2.destroyAllWindows()
 
 if __name__ == '__main__':
